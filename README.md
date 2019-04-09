@@ -1,6 +1,6 @@
 # GBM_scRNAseq
 
-Scripts for analysing scRNA-seq data obtained from glioblastoma cells, used in our publication [REF]
+Scripts for analysing scRNA-seq data obtained from glioblastoma cells, used in the publication [REF]. UMI count data is accessible [HERE].
 
 
 ## License
