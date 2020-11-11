@@ -1,0 +1,308 @@
+---
+title: "GBM_01"
+author: "Teresa G Krieger"
+date: "2/20/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### GBM analysis 01: clustering of all cells
+
+##### Load libraries and initialise
+```{r echo=FALSE}
+
+# ---- Load packages ----
+library(Seurat)
+library("RColorBrewer") 
+library(data.table)
+library(plyr)
+# 
+
+# --- Set working directory ----
+folderpath <- "~/Documents/Postdoc/GBM/Analysis_scRNA-seq/" 
+setwd(folderpath)
+
+# ---- User-defined functions ----
+printf <- function(...) cat(sprintf(...))
+
+# ---- Initialise variables ----
+sids <- c("NSC", "F2m", "F3m", "F6m", "F9m", "F2", "F3", "F6", "F9")
+PatientNames <- c("F2", "F3", "F6", "F9")
+SampleNames <- c("NSC", PatientNames)
+ChipIDs <- c("99131", "99205", "99209", "99165", "99132", "97659", "97668", "97990", "97911")
+colors <- brewer.pal(10, "Set3")
+cds <- read.csv(paste0(folderpath,"resources/GRCh37_protein_coding.csv"))[,1]
+
+```
+
+##### Load count data, normalise, filter based on mito.genes
+```{r echo=FALSE}
+
+# ---- Load count data ----
+
+# Read in raw counts
+count.matrix <- fread(file = paste0(folderpath, "rawdata/AllSamples_counts_noMeanCen_noLogTrans.csv"),
+                      header = T, 
+                      data.table = T
+                      )    
+c <- count.matrix
+all.gene.names <- c[,1]
+c[,1] <- NULL 
+count.matrix <- as.matrix(c)
+rownames(count.matrix) <- t(all.gene.names)
+rm(c)
+
+# Create Seurat object from full count.matrix
+gbm <- CreateSeuratObject(count.matrix, 
+                          project = "gbm", 
+                          min.cells = 0, min.genes = 0, is.expr = 0, 
+                          normalization.method = NULL,
+                          do.scale = FALSE, do.center = FALSE,
+                          names.field = 1, names.delim = "-"
+)
+
+# Calculate fraction of mitochondrial genes
+mito.genes <- grep(pattern = "^MT-", x = rownames(x = gbm@raw.data), value = TRUE)
+percent.mito <- Matrix::colSums(gbm@raw.data[mito.genes,])/
+                Matrix::colSums(gbm@raw.data)
+gbm <- AddMetaData(object = gbm, metadata = percent.mito, col.name = "percent.mito")
+```
+
+##### Fraction of mitochondrial genes
+```{r echo=FALSE}
+VlnPlot(object = gbm, features = "percent.mito", point.size.use = 0.1, y.max = 0.2)
+VlnPlot(object = gbm, features = "nUMI", point.size.use = 0.1)
+VlnPlot(object = gbm, features = "nGene", point.size.use = 0.1, y.max = 200)
+```
+
+##### Filter cells with <150 genes or > 15% mito.genes
+```{r echo=FALSE}
+# ---- Filter cells with <150 genes or > 15% mito.genes ----
+gbm <- FilterCells(object = gbm, subset.names = c("nGene", "percent.mito"), 
+                   low.thresholds = c(150, -Inf), high.thresholds = c(Inf, 0.15))
+# retain only filtered cells in count.matrix
+count.matrix <- count.matrix[,colnames(gbm@data)]
+
+# ---- LogNormalise data ---- log1p(value/colSums[cell-idx]*scale_factor)
+gbm <- NormalizeData(object = gbm, 
+                     normalization.method = "LogNormalize", 
+                     scale.factor = 10000)
+```
+
+##### Exclude genes with low aggregate expression 
+```{r eval=FALSE, echo=FALSE}
+# Calculate aggregate expression of each gene
+scale <- colSums(gbm@raw.data)/1e6
+cpm <- matrix(ncol = ncol(gbm@raw.data), nrow = nrow(gbm@raw.data))
+for (i in 1:length(scale)){
+  cpm[,i] <- gbm@raw.data[,i]/scale[i]
+}
+colnames(cpm) <- colnames(gbm@raw.data)
+rownames(cpm) <- rownames(gbm@raw.data)
+AggregateExpression <- log(rowMeans(cpm) + 1)
+names(AggregateExpression) <- rownames(gbm@raw.data)
+
+# Exclude genes with aggregate expression below 2 --> 8533 genes 
+genes.use <- (AggregateExpression>2)
+full <- gbm@raw.data
+gbm@raw.data <- gbm@raw.data[genes.use,]
+gbm@data <- gbm@data[genes.use,]
+sum(genes.use)
+```
+
+##### Dimensional reduction and cluster identification
+```{r echo=FALSE}
+# ---- Dimensional reduction ----
+
+# Calculate relative expression for each gene in each sample, compared to all samples
+# with regression against nUMI and percent.mito
+gbm <- ScaleData(gbm,
+                 vars.to.regress = c("nUMI", "percent.mito"),
+                 do.scale = T, model.use = "linear", use.umi = F, scale.max = 10,
+                 do.center = T,
+                 block.size = 1000,
+                 min.cells.to.block = 10000,
+                 display.progress = TRUE
+)
+
+# Run PCA on all genes
+gbm@var.genes <- rownames(gbm@data)
+gbm <- RunPCA(object = gbm, pc.genes = gbm@var.genes, do.print = TRUE, pcs.print = 1:10, 
+              genes.print = 20)
+gbm <- ProjectPCA(object = gbm, do.print = TRUE, pcs.print = 1:10, 
+                  genes.print = 20)
+# PCA plots
+VizPCA(object = gbm, pcs.use = 1:2)
+PCAPlot(object = gbm, dim.1 = 1, dim.2 = 2, group.by="orig.ident")
+
+# Select sigPC
+PCHeatmap(object = gbm, pc.use = 1:6, cells.use = 500, do.balanced = F, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = gbm, pc.use = 7:12, cells.use = 500, do.balanced = F, 
+          label.columns = FALSE, use.full = FALSE)
+PCHeatmap(object = gbm, pc.use = 13:18, cells.use = 500, do.balanced = F, 
+          label.columns = FALSE, use.full = FALSE)
+PCElbowPlot(object = gbm)
+sigPC = 9
+
+# Run tSNE
+set.seed(123)
+gbm <- RunTSNE(object = gbm, dims.use = 1:sigPC, do.fast = TRUE)
+
+# tSNE plot
+TSNEPlot(object = gbm, group.by = "orig.ident")
+
+# Identify clusters (resolution 0.4)
+gbm <- FindClusters(object = gbm, reduction.type = "pca", dims.use = 1:sigPC, 
+                    resolution = 0.4, print.output = F, save.SNN = T, force.recalc = T)
+ClusterID <- gbm@meta.data$res.0.4
+# manually divide the F2 cluster into 'mixed' and 'unmixed'
+ClusterID[
+  as.logical((gbm@meta.data$ClusterID=="2")*
+               (gbm@meta.data$orig.ident=="F2"))] <- 9
+gbm@meta.data$ClusterID <- ClusterID
+
+# ---- Save results of dimensional reduction ----
+
+# save gene loadings of all genes in PCs 1-10
+for (pc in 1:10){
+  gene.loadings <- gbm@dr$pca@gene.loadings.full[,pc]
+  gene.loadings.rank <- gene.loadings
+  gene.loadings <- gene.loadings[order(-gene.loadings.rank)]
+  if (pc==1){
+    gene.loadings.all <- names(gene.loadings)
+  } else {
+    gene.loadings.all <- cbind(gene.loadings.all, names(gene.loadings))
+  }
+  write.csv(gene.loadings, file=paste0(folderpath,sprintf("seurat-out/GeneLoadings_full_PC_%s.csv",pc)))
+}
+write.csv(gene.loadings.all, file=paste0(folderpath,"seurat-out/GeneLoadings_full_allPCs.csv"))
+
+# save gene loadings of selected genes in PCs 1-10
+for (pc in 1:10){
+  gene.loadings <- gbm@dr$pca@gene.loadings[,pc]
+  gene.loadings.rank <- gene.loadings
+  gene.loadings <- gene.loadings[order(-gene.loadings.rank)]
+  if (pc==1){
+    gene.loadings.all <- names(gene.loadings)
+  } else {
+    gene.loadings.all <- cbind(gene.loadings.all, names(gene.loadings))
+  }
+  write.csv(gene.loadings, file=paste0(folderpath,sprintf("seurat-out/GeneLoadings_PC_%s.csv",pc)))
+}
+write.csv(gene.loadings.all, file=paste0(folderpath,"seurat-out/GeneLoadings_allPCs.csv"))
+
+# PCA plot 
+plot1 <- PCAPlot(object = gbm, dim.1 = 1, dim.2 = 2, group.by="orig.ident", do.return=T)
+plot2 <- PCAPlot(object = gbm, dim.1 = 3, dim.2 = 4, group.by="orig.ident", do.return=T)
+plot3 <- PCAPlot(object = gbm, dim.1 = 5, dim.2 = 6, group.by="orig.ident", do.return=T)
+filename <- paste0(folderpath, "seurat-out/PCAPlots_12_34_56.pdf")
+pdf(filename,width=24,height=7,paper='special') 
+plot_grid(plot1, plot2, plot3, labels = c("PC1 vs PC2", "PC3 vs PC4", "PC5 vs PC6"), hjust = -1, vjust = 2, ncol = 3)
+dev.off()
+
+# PCA plots colored by orig.ident and ClusterID
+plot1 <- PCAPlot(object = gbm, dim.1 = 1, dim.2 = 3, group.by="ClusterID", do.return=T)
+plot2 <- PCAPlot(object = gbm, dim.1 = 1, dim.2 = 3, group.by="orig.ident", do.return=T)
+filename <- paste0(folderpath, "seurat-out/PCAPlot_byClusterID_bySampleID_res0p4.pdf")
+pdf(filename,width=16,height=7,paper='special') 
+plot_grid(plot1, plot2, labels = c("Cluster ID", "Sample ID"), hjust = -1, vjust = 2, ncol = 2)
+dev.off()
+
+# QC on PCA plot 
+filename <- paste0(folderpath, "seurat-out/QC_on_PCAPlot.pdf")
+pdf(filename,width=24,height=7,paper='special') 
+print(FeaturePlot(gbm, features.plot = c("nGene", "nUMI", "percent.mito"),
+                  nCol = 3,
+                  min.cutoff = NA, max.cutoff = NA,
+                  dim.1 = 1, dim.2 = 3, pt.size = 1,
+                  cols.use = c("yellow", "red"), pch.use = 16,
+                  reduction.use = "pca",
+                  no.legend = F,
+                  do.return = T
+))
+dev.off()
+
+# tSNE plot
+plot1 <- TSNEPlot(object = gbm, dim.1 = 1, dim.2 = 2, do.return = TRUE, group.by = "ClusterID", no.legend = F, do.label = F)
+plot2 <- TSNEPlot(object = gbm, dim.1 = 1, dim.2 = 2, do.return = TRUE, group.by = "orig.ident", no.legend = F, do.label = F)
+filename <- paste0(folderpath, "seurat-out/TSNEPlot_byClusterID_bySampleID_res0p4_afterReg.pdf")
+pdf(filename,width=16,height=7,paper='special') 
+plot_grid(plot1, plot2, labels = c("Cluster ID", "Sample ID"), hjust = -1, vjust = 2)
+dev.off()
+
+# QC on tSNE plot
+filename <- paste0(folderpath, "seurat-out/QC_on_tSNE.pdf")
+pdf(filename,width=24,height=7,paper='special') 
+print(FeaturePlot(gbm, features.plot = c("nGene", "nUMI", "percent.mito"),
+                  nCol = 3,
+                  min.cutoff = NA, max.cutoff = NA,
+                  dim.1 = 1, dim.2 = 2, pt.size = 1,
+                  cols.use = c("yellow", "red"), pch.use = 16,
+                  reduction.use = "tsne",
+                  no.legend = F,
+                  do.return = T
+))
+dev.off()
+
+```
+
+##### Collate meta data and save Seurat object
+```{r echo=FALSE}
+
+# ---- Collate meta data and save Seurat object ----
+
+SampleID <- gbm@meta.data$orig.ident
+TumorBrain <- mapvalues(ClusterID, 
+                        0:9, 
+                        c("Brain", "Brain", "Tumor", "Brain", "Tumor", "Tumor", "Tumor", "Tumor", "Tumor", "Tumor"))
+MixedUnmixed <- mapvalues(SampleID, 
+                          c("F2",  "F2m", "F3",  "F3m", "F6",  "F6m", "F9",  "F9m", "NSC"),
+                          c("Unmixed", "Mixed", "Unmixed", "Mixed", "Unmixed", "Mixed", "Unmixed", "Mixed", "Unmixed"))
+PatientID <- mapvalues(SampleID, 
+                       c("F2",  "F2m", "F3",  "F3m", "F6",  "F6m", "F9",  "F9m", "NSC"),
+                       c("F2", "F2", "F3", "F3", "F6", "F6", "F9", "F9", "NSC"))
+
+MetaData <- data.frame(SampleID = SampleID,
+                       TumorBrain = TumorBrain,
+                       MixedUnmixed = MixedUnmixed,
+                       PatientID = PatientID
+)
+
+gbm@meta.data <- cbind(gbm@meta.data, MetaData)
+
+# Save Seurat object
+gbm.AllCells <- gbm
+save(gbm.AllCells, file = paste0(folderpath,"seurat-datasets/SeuratObj_gbm_AllCells_afterTSNE_afterRegression.Rdata"))
+
+```
+
+##### Sanity checks
+```{r echo=FALSE}
+# ---- Check whether cells in 'tumor' samples are from GBM-only cultures etc.
+table(gbm@meta.data$TumorBrain[gbm@meta.data$SampleID %in% c("F2", "F3", "F6", "F9")])
+table(gbm@meta.data$SampleID[gbm@meta.data$TumorBrain == "Tumor"])
+table(gbm@meta.data$SampleID[gbm@meta.data$TumorBrain == "Brain"])
+# --> 95% accurate
+```
+
+##### Expression of GBM stem cell markers
+```{r echo=FALSE}
+# ---- Expression of GBM stem cell markers -----------
+
+pdf(paste0(folderpath, "seurat-out/FeaturePlot_GBMSC_Markers.pdf"), width=10, heigh=10, paper='special')
+FeaturePlot(object = gbm, features.plot = c("PROM1", "ITGA6", 
+                                            "GFAP", "CD44", 
+                                            "EGFR",
+                                            "OLIG2", "SOX2",
+                                            "NES", "PAX6"),
+            cols.use = c("grey", "red"), 
+            pt.size = 0.5,
+            reduction.use = "tsne")
+dev.off()
+```
+
+

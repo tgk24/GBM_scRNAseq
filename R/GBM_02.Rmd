@@ -1,0 +1,370 @@
+---
+title: "GBM_02"
+author: "Teresa G Krieger"
+date: "2/20/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### GBM analysis 02: analysis of unmixed samples
+
+##### Load gbm.AllCells and subset gbm.GBMunmixed
+```{r echo=FALSE}
+
+folderpath <- "~/Documents/Postdoc/GBM/Analysis_scRNA-seq/seurat-GBMunmixed/"
+setwd(folderpath)
+
+load("~/Documents/Postdoc/GBM/Analysis_scRNA-seq/seurat-datasets/SeuratObj_gbm_AllCells_afterTSNE_afterRegression.Rdata")
+gbm.AllCells <- SetAllIdent(gbm.AllCells, id="SampleID")
+gbm.GBMunmixed <- SubsetData(object = gbm.AllCells, 
+                             ident.use = c("F2", "F3", "F6", "F9"),
+                             subset.raw = T)
+
+gbm <- gbm.GBMunmixed
+```
+
+##### Mean centering
+```{r echo=FALSE}
+# ---- Mean center each sample individually ----
+
+# Start from raw count matrix
+count.matrix <- gbm@raw.data
+all.gene.names <- rownames(gbm@raw.data)
+# Normalise data according to log1p(value/colSums[cell-idx]*scale_factor):
+# Make into cpm values
+tot.exp <- colSums(count.matrix)/1e6
+# Exclude cells with zero expression
+if (sum(tot.exp==0)>0) {
+  count.matrix <- count.matrix[,-which(tot.exp==0)]
+  tot.exp <- tot.exp[-which(tot.exp==0)]
+}
+cpm.matrix <- scale(count.matrix, center = F, scale = tot.exp)
+log.cpm.matrix <- log1p(cpm.matrix/10)
+patnames <- sub("\\-.*", "", x = colnames(log.cpm.matrix))
+patnames.un <- unique(patnames)
+log.cpm.matrix.mc <- NULL
+for (i in 1:length(patnames.un)) {
+  to.mc <- log.cpm.matrix[,patnames == patnames.un[i]]
+  # mean center in this step:
+  to.mc <- t(scale(t(to.mc), center = T, scale = F))
+  log.cpm.matrix.mc <- cbind(log.cpm.matrix.mc, to.mc)
+}
+
+# Create new Seurat object after mean centering;
+# consider genes as 'expressed' only when mean-centered expression > 0
+gbm <- CreateSeuratObject(log.cpm.matrix.mc, 
+                          project = "gbm", 
+                          min.cells = 1, min.genes = 1, is.expr = 0, 
+                          normalization.method = NULL,
+                          do.scale = FALSE, do.center = FALSE,
+                          names.field = 1, names.delim = "-"
+)
+
+gbm@meta.data <- gbm.GBMunmixed@meta.data
+gbm@scale.data <- gbm@data
+
+# ---- Dimensional reduction and clustering ----
+
+# Run PCA on all genes
+gbm@var.genes <- rownames(gbm@data)
+gbm <- RunPCA(object = gbm, pc.genes = gbm@var.genes, do.print = TRUE, pcs.print = 1:10, 
+              genes.print = 20)
+gbm <- ProjectPCA(object = gbm, do.print = TRUE, pcs.print = 1:10, 
+                  genes.print = 20)
+# PCA plot
+PCAPlot(object = gbm, dim.1 = 1, dim.2 = 2, group.by="orig.ident")
+PCAPlot(object = gbm, dim.1 = 3, dim.2 = 4, group.by="orig.ident")
+
+# Select sigPC
+PCElbowPlot(object = gbm)
+sigPC = 10
+
+# Run tSNE
+set.seed(123)
+gbm <- RunTSNE(object = gbm, dims.use = 1:sigPC, do.fast = TRUE)
+
+# Identify clusters (resolution 0.4)
+gbm <- FindClusters(object = gbm, reduction.type = "pca", dims.use = 1:sigPC, 
+                    resolution = 0.4, print.output = F, save.SNN = T, force.recalc = T)
+ClusterID <- gbm@meta.data$res.0.4
+gbm@meta.data$ClusterID <- ClusterID
+
+# tSNE plot
+TSNEPlot(object = gbm)
+TSNEPlot(object = gbm, group.by = "SampleID")
+
+# QC feature plots
+FeaturePlot(gbm, features.plot = "nUMI")
+FeaturePlot(gbm, features.plot = "percent.mito")
+FeaturePlot(gbm, features.plot = "nGene")
+
+# ---- Save results of dimensional reduction and clustering ----
+
+# save gene loadings of all genes in PCs 1-10
+for (pc in 1:10){
+  gene.loadings <- gbm@dr$pca@gene.loadings.full[,pc]
+  gene.loadings.rank <- gene.loadings
+  gene.loadings <- gene.loadings[order(-gene.loadings.rank)]
+  if (pc==1){
+    gene.loadings.all <- names(gene.loadings)
+  } else {
+    gene.loadings.all <- cbind(gene.loadings.all, names(gene.loadings))
+  }
+  write.csv(gene.loadings, file=paste0(folderpath,sprintf("GeneLoadings_full_PC_%s.csv",pc)))
+}
+write.csv(gene.loadings.all, file=paste0(folderpath,"GeneLoadings_full_allPCs.csv"))
+
+# save gene loadings of selected genes in PCs 1-10
+for (pc in 1:10){
+  gene.loadings <- gbm@dr$pca@gene.loadings[,pc]
+  gene.loadings.rank <- gene.loadings
+  gene.loadings <- gene.loadings[order(-gene.loadings.rank)]
+  if (pc==1){
+    gene.loadings.all <- names(gene.loadings)
+  } else {
+    gene.loadings.all <- cbind(gene.loadings.all, names(gene.loadings))
+  }
+  write.csv(gene.loadings, file=paste0(folderpath,sprintf("GeneLoadings_PC_%s.csv",pc)))
+}
+write.csv(gene.loadings.all, file=paste0(folderpath,"GeneLoadings_allPCs.csv"))
+
+# PCA plot 
+plot1 <- PCAPlot(object = gbm, dim.1 = 1, dim.2 = 2, group.by="orig.ident", do.return=T)
+plot2 <- PCAPlot(object = gbm, dim.1 = 3, dim.2 = 4, group.by="orig.ident", do.return=T)
+plot3 <- PCAPlot(object = gbm, dim.1 = 5, dim.2 = 6, group.by="orig.ident", do.return=T)
+filename <- paste0(folderpath, "PCAPlots_12_34_56.pdf")
+pdf(filename,width=24,height=7,paper='special') 
+plot_grid(plot1, plot2, plot3, labels = c("PC1 vs PC2", "PC3 vs PC4", "PC5 vs PC6"), hjust = -1, vjust = 2, ncol = 3)
+dev.off()
+
+# PCA plots colored by orig.ident and ClusterID
+plot1 <- PCAPlot(object = gbm, dim.1 = 1, dim.2 = 2, group.by="ClusterID", do.return=T)
+plot2 <- PCAPlot(object = gbm, dim.1 = 1, dim.2 = 2, group.by="orig.ident", do.return=T)
+filename <- paste0(folderpath, "PCAPlot_byClusterID_bySampleID_res0p4.pdf")
+pdf(filename,width=16,height=7,paper='special') 
+plot_grid(plot1, plot2, labels = c("Cluster ID", "Sample ID"), hjust = -1, vjust = 2, ncol = 2)
+dev.off()
+
+# QC on PCA plot 
+filename <- paste0(folderpath, "QC_on_PCAPlot.pdf")
+pdf(filename,width=24,height=7,paper='special') 
+print(FeaturePlot(gbm, features.plot = c("nGene", "nUMI", "percent.mito"),
+                  nCol = 3,
+                  min.cutoff = NA, max.cutoff = NA,
+                  dim.1 = 1, dim.2 = 2, pt.size = 1,
+                  cols.use = c("yellow", "red"), pch.use = 16,
+                  reduction.use = "pca",
+                  no.legend = F,
+                  do.return = T
+))
+dev.off()
+
+# tSNE plot
+plot1 <- TSNEPlot(object = gbm, dim.1 = 1, dim.2 = 2, do.return = TRUE, group.by = "ClusterID", no.legend = F, do.label = F)
+plot2 <- TSNEPlot(object = gbm, dim.1 = 1, dim.2 = 2, do.return = TRUE, group.by = "orig.ident", no.legend = F, do.label = F)
+filename <- paste0(folderpath, "TSNEPlot_byClusterID_bySampleID_res0p4_afterReg.pdf")
+pdf(filename,width=16,height=7,paper='special') 
+plot_grid(plot1, plot2, labels = c("Cluster ID", "Sample ID"), hjust = -1, vjust = 2)
+dev.off()
+
+# QC on tSNE plot
+filename <- paste0(folderpath, "QC_on_tSNE.pdf")
+pdf(filename,width=24,height=7,paper='special') 
+print(FeaturePlot(gbm, features.plot = c("nGene", "nUMI", "percent.mito"),
+                  nCol = 3,
+                  min.cutoff = NA, max.cutoff = NA,
+                  dim.1 = 1, dim.2 = 2, pt.size = 1,
+                  cols.use = c("yellow", "red"), pch.use = 16,
+                  reduction.use = "tsne",
+                  no.legend = F,
+                  do.return = T
+))
+dev.off()
+
+# potential cell type markers
+filename <- paste0(folderpath, "FeaturePlot_CellTypeMarkers_tsne.pdf")
+pdf(filename,width=24,height=24,paper='special') 
+print(FeaturePlot(gbm, features.plot = c("MKI67", "CENPE","TOP2A", # cycling cells
+                                         "GFAP", "AQP4", # astrocytes
+                                         "OLIG2",  # oligodendrocytes
+                                         "NES", "PAX6", # NSCs
+                                         "MAP2"), # neurons
+                  nCol = 3,
+                  min.cutoff = NA, max.cutoff = NA,
+                  dim.1 = 1, dim.2 = 2, pt.size = 1,
+                  cols.use = c("yellow", "red"), pch.use = 16,
+                  reduction.use = "tsne",
+                  no.legend = F,
+                  do.return = T
+))
+dev.off()
+
+
+#### ---- DE analysis ----
+
+marker.genes <- FindAllMarkers(gbm, 
+                               test.use = "wilcox", 
+                               logfc.threshold = 0.25, min.pct = 0.1, 
+                               pseudocount.use = 1,
+                               only.pos = FALSE
+)
+
+for (i in 0:max(as.numeric( gbm@meta.data$ClusterID))){
+  markers <- marker.genes[marker.genes$cluster==as.character(i),]
+  markers.up <- markers[markers$avg_logFC>0,]
+  markers.down <- markers[markers$avg_logFC<0,]
+  write.csv(markers.up,file=paste0(folderpath, sprintf("Cluster_%s_MarkersUp.csv",i)))
+  write.csv(markers.down,file=paste0(folderpath, sprintf("Cluster_%s_MarkersDown.csv",i)))
+}
+
+marker.genes.23 <- FindMarkers(gbm, ident.1 = c(2,3), ident.2 = c(0,1),
+                                  test.use = "wilcox", 
+                                  logfc.threshold = 0.25, min.pct = 0.1,
+                                  pseudocount.use = 1,
+                                  only.pos = FALSE
+)
+for (i in 23){
+  markers <- marker.genes.23
+  markers.up <- markers[markers$avg_logFC>0,]
+  markers.down <- markers[markers$avg_logFC<0,]
+  write.csv(markers.up,file=paste0(folderpath, sprintf("Cluster_%s_MarkersUp.csv",i)))
+  write.csv(markers.down,file=paste0(folderpath, sprintf("Cluster_%s_MarkersDown.csv",i)))
+}
+
+
+#### ---- Save Seurat object ----
+
+gbm.GBMunmixed <- gbm
+save(gbm.GBMunmixed, file = "~/Documents/Postdoc/GBM/Analysis_scRNA-seq/seurat-datasets/SeuratObj_gbm_GBMunmixed_afterMC_afterTSNE.Rdata")
+
+
+```
+
+
+
+##### Integrate unmixed samples using CCA (not evaluated)
+```{r echo=FALSE}
+
+# Different method of integration: CCA
+# Subset all four unmixed samples
+f2.data <- SubsetData(object = gbm.AllCells, ident.use = "F2", subset.raw = T)
+f3.data <- SubsetData(object = gbm.AllCells, ident.use = "F3", subset.raw = T)
+f6.data <- SubsetData(object = gbm.AllCells, ident.use = "F6", subset.raw = T)
+f9.data <- SubsetData(object = gbm.AllCells, ident.use = "F9", subset.raw = T)
+
+# Create and setup Seurat objects for each dataset
+f2.data <- FilterCells(object = f2.data, subset.names = c("nGene", "percent.mito"), 
+                   low.thresholds = c(150, -Inf), high.thresholds = c(Inf, 0.15))
+f2.data <- NormalizeData(f2.data)
+f2.data <- FindVariableGenes(f2.data, do.plot = T, display.progress = F)
+f2.data <- ScaleData(f2.data, vars.to.regress = c("nUMI", "percent.mito"))
+
+f3.data <- FilterCells(object = f3.data, subset.names = c("nGene", "percent.mito"), 
+                   low.thresholds = c(150, -Inf), high.thresholds = c(Inf, 0.15))
+f3.data <- NormalizeData(f3.data)
+f3.data <- FindVariableGenes(f3.data, do.plot = T, display.progress = F)
+f3.data <- ScaleData(f3.data, vars.to.regress = c("nUMI", "percent.mito"))
+
+f6.data <- FilterCells(object = f6.data, subset.names = c("nGene", "percent.mito"), 
+                   low.thresholds = c(150, -Inf), high.thresholds = c(Inf, 0.15))
+f6.data <- NormalizeData(f6.data)
+f6.data <- FindVariableGenes(f6.data, do.plot = T, display.progress = F)
+f6.data <- ScaleData(f6.data, vars.to.regress = c("nUMI", "percent.mito"))
+
+f9.data <- FilterCells(object = f9.data, subset.names = c("nGene", "percent.mito"), 
+                   low.thresholds = c(150, -Inf), high.thresholds = c(Inf, 0.15))
+f9.data <- NormalizeData(f9.data)
+f9.data <- FindVariableGenes(f9.data, do.plot = T, display.progress = F)
+f9.data <- ScaleData(f9.data, vars.to.regress = c("nUMI", "percent.mito"))
+
+# Determine genes to use for CCA, must be highly variable in at least 2 datasets
+ob.list <- list(f2.data, f3.data, f6.data, f9.data)
+genes.use <- c()
+for (i in 1:length(ob.list)) {
+  genes.use <- c(genes.use, head(rownames(ob.list[[i]]@hvg.info), 1000))
+}
+genes.use <- names(which(table(genes.use) > 1))
+for (i in 1:length(ob.list)) {
+  genes.use <- genes.use[genes.use %in% rownames(ob.list[[i]]@scale.data)]
+}
+
+# Run multi-set CCA
+cca.integrated <- RunMultiCCA(ob.list, genes.use = genes.use, num.ccs = 15)
+
+# CC Selection
+MetageneBicorPlot(cca.integrated, grouping.var = "SampleID", dims.eval = 1:15)
+DimHeatmap(object = cca.integrated, reduction.type = "cca", cells.use = 500, 
+    dim.use = 1:9, do.balanced = TRUE)
+
+sigCC <- 6
+
+p1 <- DimPlot(object = cca.integrated, reduction.use = "cca", group.by = "SampleID", 
+    pt.size = 0.5, do.return = TRUE)
+p2 <- VlnPlot(object = cca.integrated, features.plot = "CC1", group.by = "SampleID", 
+    do.return = TRUE)
+p3 <- VlnPlot(object = cca.integrated, features.plot = "CC2", group.by = "SampleID", 
+    do.return = TRUE)
+plot_grid(p1, p2, p3)
+
+# Run rare non-overlapping filtering
+cca.integrated <- CalcVarExpRatio(object = cca.integrated, reduction.type = "pca",
+                                       grouping.var = "SampleID", dims.use = 1:9)
+cca.integrated.overlap <- SubsetData(cca.integrated, subset.name = "var.ratio.pca",
+                                           accept.low = 0.5)
+
+# Alignment
+cca.integrated.overlap <- AlignSubspace(cca.integrated.overlap,
+                                     reduction.type = "cca",
+                                     grouping.var = "SampleID",
+                                     dims.align = 1:10)
+
+# t-SNE and Clustering
+cca.integrated.overlap <- FindClusters(cca.integrated.overlap, reduction.type = "cca.aligned",
+                                    dims.use = 1:6, save.SNN = T, resolution = 0.45)
+cca.integrated.overlap <- RunTSNE(cca.integrated.overlap,
+                               reduction.use = "cca.aligned",
+                               dims.use = 1:6)
+
+# Visualization
+TSNEPlot(cca.integrated.overlap, do.label = T)
+TSNEPlot(cca.integrated.overlap, group.by = "SampleID", do.label = T)
+
+dim(cca.integrated@data)
+dim(cca.integrated.overlap@data)
+
+# ---- Differential expression analysis ----
+
+# remove empty factor levels from SampleID
+cca.integrated.overlap@meta.data$SampleID <- factor(cca.integrated.overlap@meta.data$SampleID)
+cluster0.markers <- FindConservedMarkers(cca.integrated.overlap, ident.1 = 0, grouping.var = "SampleID", print.bar = FALSE, only.pos = TRUE)
+cluster1.markers <- FindConservedMarkers(cca.integrated.overlap, ident.1 = 1, grouping.var = "SampleID", print.bar = FALSE, only.pos = TRUE)
+cluster2.markers <- FindConservedMarkers(cca.integrated.overlap, ident.1 = 2, grouping.var = "SampleID", print.bar = FALSE, only.pos = TRUE)
+cluster3.markers <- FindConservedMarkers(cca.integrated.overlap, ident.1 = 3, grouping.var = "SampleID", print.bar = FALSE, only.pos = TRUE)
+
+FeaturePlot(object = cca.integrated.overlap, features.plot = rownames(cluster0.markers)[1:9], min.cutoff = "q9", cols.use = c("lightgrey", 
+                                                                                                                                            "blue"), pt.size = 0.5)
+FeaturePlot(object = cca.integrated.overlap, features.plot = rownames(cluster1.markers)[1:9], min.cutoff = "q9", cols.use = c("lightgrey",  "blue"), pt.size = 0.5)
+FeaturePlot(object = cca.integrated.overlap, features.plot = rownames(cluster2.markers)[1:9], min.cutoff = "q9", cols.use = c("lightgrey", "blue"), pt.size = 0.5)
+FeaturePlot(object = cca.integrated.overlap, features.plot = rownames(cluster3.markers)[1:9], min.cutoff = "q9", cols.use = c("lightgrey",  "blue"), pt.size = 0.5)
+
+```
+
+
+
+
+```{r echo=FALSE}
+
+```
+
+
+
+```{r echo=FALSE}
+
+
+```
+
+
+

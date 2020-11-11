@@ -1,0 +1,303 @@
+---
+title: "GBM_03"
+author: "Teresa G Krieger"
+date: "2/21/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### GBM analysis 03: differential expression of mixed and unmixed GBM
+
+##### Differential expression analysis
+```{r echo=FALSE}
+
+# ---- Load libraries ----
+
+library(ggrepel)
+library(NMF)
+library(colorRamps)
+library(ggrepel)
+
+# ---- Load data ----
+
+folderpath <- "~/Documents/Postdoc/GBM/Analysis_scRNA-seq/" 
+setwd(folderpath)
+
+load(paste0(folderpath,"seurat-datasets/SeuratObj_gbm_AllCells_afterTSNE_afterRegression.Rdata"))
+gbm <- gbm.AllCells
+
+
+# ---- Differential expression analysis ----
+
+# DE between mixed and un-mixed tumor cells:
+gbm <- SetAllIdent(gbm, id = "ClusterID")
+
+DE_F2 <- FindMarkers(object = gbm, ident.1 = 2, ident.2 = 9, 
+                     logfc.threshold = 0.15, test.use = "wilcox", min.pct = 0.1)
+DE_F3 <- FindMarkers(object = gbm, ident.1 = 8, ident.2 = 6, 
+                     logfc.threshold = 0.15, test.use = "wilcox", min.pct = 0.1)
+DE_F9 <- FindMarkers(object = gbm, ident.1 = 4, ident.2 = 5, 
+                     logfc.threshold = 0.15, test.use = "wilcox", min.pct = 0.1)
+DE_allPat <- FindMarkers(object = gbm, ident.1 = c(2,4,8), ident.2 = c(5,6,9), 
+                     logfc.threshold = 0.15, test.use = "wilcox", min.pct = 0.1)
+
+DE_F2_GenesUp <- rownames(DE_F2)[as.logical((DE_F2$p_val_adj < 0.05)*(DE_F2$avg_logFC > 0))]
+DE_F2_GenesDown <- rownames(DE_F2)[as.logical((DE_F2$p_val_adj < 0.05)*(DE_F2$avg_logFC < 0))]
+DE_F3_GenesUp <- rownames(DE_F3)[as.logical((DE_F3$p_val_adj < 0.05)*(DE_F3$avg_logFC > 0))]
+DE_F3_GenesDown <- rownames(DE_F3)[as.logical((DE_F3$p_val_adj < 0.05)*(DE_F3$avg_logFC < 0))]
+DE_F9_GenesUp <- rownames(DE_F9)[as.logical((DE_F9$p_val_adj < 0.05)*(DE_F9$avg_logFC > 0))]
+DE_F9_GenesDown <- rownames(DE_F9)[as.logical((DE_F9$p_val_adj < 0.05)*(DE_F9$avg_logFC < 0))]
+DE_allPat_GenesUp <- rownames(DE_allPat)[as.logical((DE_allPat$p_val_adj < 0.05)*(DE_allPat$avg_logFC > 0))]
+DE_allPat_GenesDown <- rownames(DE_allPat)[as.logical((DE_allPat$p_val_adj < 0.05)*(DE_allPat$avg_logFC < 0))]
+
+DE_intersect_GenesUp <- intersect(DE_F2_GenesUp, intersect(DE_F3_GenesUp, DE_F9_GenesUp))
+DE_intersect_GenesDown <- intersect(DE_F2_GenesDown, intersect(DE_F3_GenesDown, DE_F9_GenesDown))
+
+# save DE genes
+write.csv(DE_intersect_GenesUp, file=paste0(folderpath, "seurat-out/DE_intersect_GenesUp.csv"), row.names = F)
+write.csv(DE_intersect_GenesDown, file=paste0(folderpath, "seurat-out/DE_intersect_GenesDown.csv"), row.names = F)
+save(DE_F2, file=paste0(folderpath, "seurat-out/DE_F2.Rdata"))
+save(DE_F3, file=paste0(folderpath, "seurat-out/DE_F3.Rdata"))
+save(DE_F9, file=paste0(folderpath, "seurat-out/DE_F9.Rdata"))
+save(DE_allPat, file=paste0(folderpath, "seurat-out/DE_allPat.Rdata"))
+
+
+
+# volcano plot of DE_allPat:
+DEres <- DE_allPat
+DEres$sigGene <- (DEres$p_val_adj < 1e-30)
+DEres$labelGene <- F
+DEres$labelGene[as.logical((DEres$p_val_adj<1e-30)*(DEres$avg_logFC>0.0))] <- T
+
+ggplot(DEres) +
+  geom_point(aes(x=avg_logFC, y=-log10(p_val_adj), colour=sigGene)) +
+  geom_text_repel(aes(x = avg_logFC, y = -log10(p_val_adj), label = ifelse(labelGene == T, rownames(DEres),""))) +
+  ggtitle("DE genes") +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  theme(legend.position = "none",
+        plot.title = element_text(size = rel(1.5), hjust = 0.5),
+        axis.title = element_text(size = rel(1.25)))
+  
+# volcano plot of intersection:
+# first check that all genes from intersection are represented in DE_allPat
+#mean(DE_intersect_GenesDown %in% rownames(DE_allPat))
+#mean(DE_intersect_GenesUp %in% rownames(DE_allPat))
+# then make volcano plot using only intersection
+DEres <- DE_allPat[c(DE_intersect_GenesUp, DE_intersect_GenesDown),]
+DEres$sigGene <- (DEres$p_val_adj < 1e-30)
+DEres$labelGene <- F
+DEres$labelGene[as.logical((DEres$p_val_adj<1e-30)*(DEres$avg_logFC>0.3))] <- T
+
+ggplot(DEres) +
+  geom_point(aes(x=avg_logFC, y=-log10(p_val_adj), colour=sigGene)) +
+  geom_text_repel(aes(x = avg_logFC, y = -log10(p_val_adj), label = ifelse(labelGene == T, rownames(DEres),""))) +
+  ggtitle("DE genes") +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  theme(legend.position = "none",
+        plot.title = element_text(size = rel(1.5), hjust = 0.5),
+        axis.title = element_text(size = rel(1.25)))
+  
+
+
+
+
+# ---- Plot heatmap (clustering) of tumor cells using expression of DE genes ----
+
+#g <- rownames(DE_allPat)[as.logical((DE_allPat$p_val_adj < 1e-5)*(DE_allPat$avg_logFC > 0.421))] # top 100 genes
+g <- intersect(DE_F2_GenesUp, intersect(DE_F3_GenesUp, DE_F9_GenesUp))
+# select tumor cells (exclude NSC cells erroneously classified as "Tumor")
+c <- which(as.logical((gbm@meta.data$TumorBrain == "Tumor")*(gbm@meta.data$SampleID %in% c("F2m", "F3m", "F9m", "F6m"))))
+hm.data <- as.matrix(gbm@data[g, c])
+
+MetaData <- data.frame(SampleID = gbm@meta.data$SampleID,
+                       TumorBrain = gbm@meta.data$TumorBrain,
+                       MixedUnmixed = gbm@meta.data$MixedUnmixed,
+                       PatientID = gbm@meta.data$PatientID,
+                       ClusterID = gbm@meta.data$ClusterID
+)
+hm.ann.col <- MetaData[c,]
+
+# set low and high cutoff for expression values
+x_cutoff_low <- 0
+x_cutoff_high <- 4
+breaks <- seq(x_cutoff_low, x_cutoff_high, (x_cutoff_high-x_cutoff_low)/100)
+hm.data <- apply(hm.data, c(1, 2), function(x) min(max(x,x_cutoff_low),x_cutoff_high))
+
+# order columns 
+col.order <- order(gbm@meta.data$MixedUnmixed[c])
+
+# specify colors for heatmap annotations
+VarColors1 = brewer.pal(10, "Set3")
+names(VarColors1) = levels(hm.ann.col[,"ClusterID"])
+VarColors2 = brewer.pal(9, "Paired")
+names(VarColors2) = c("F2", "F2m", "F3", "F3m", "F6", "F6m", "F9", "F9m", "NSC")
+VarColors3 = brewer.pal(4, "Set1")[1:2]
+names(VarColors3) = levels(hm.ann.col[,"TumorBrain"])
+VarColors4 = brewer.pal(4, "Set1")[3:4]
+names(VarColors4) = levels(hm.ann.col[,"MixedUnmixed"])
+VarColors5 = VarColors2[c(1,3,5,7,9)]
+names(VarColors5) = levels(hm.ann.col[,"PatientID"])
+ann_colors = list(ClusterID = VarColors1,
+                  SampleID = VarColors2,
+                  TumorBrain = VarColors3,
+                  MixedUnmixed = VarColors4,
+                  PatientID = VarColors5)
+
+cmap <- matlab.like(101)
+cmap <- colorspace::diverge_hsv(101)
+
+pdf(paste0(folderpath, "Heatmap_DE_GenesUp_sorted_mixedSamples_new8.pdf"),width=24,height=24,paper='special') 
+aheatmap(hm.data,   
+         color = cmap, breaks = breaks, border_color = NA,
+         scale = "none",
+         distfun = "spearman", hclustfun = "complete",
+         cellwidth = 0.5, cellheight = 3,
+         Rowv = T, Colv = T,
+         annCol = hm.ann.col,
+         annColors = ann_colors,
+         cexRow = 0.8, cexCol = 1.2, labCol = NA
+)
+dev.off()
+```
+
+
+##### Violin plots of DE genes
+```{r echo=FALSE}
+# ---- Violin plots of DE genes ----
+VlnPlot(gbm, features.plot = "GJA1")
+```
+
+
+##### Feature plots of DE genes
+```{r echo=FALSE}
+
+# ---- Feature plots of DE genes ----
+
+# use scaled data for visualisations
+gbm.vis <- gbm
+gbm.vis@data <- gbm.vis@scale.data
+
+FeaturePlot(gbm.vis, features.plot = "MKI67", nCol = 1, min.cutoff = NA, max.cutoff = NA, no.legend=F)
+
+FeaturePlot(gbm.vis, features.plot = c("DCX", "GFAP", "TOP2A",
+                                       "GPC3", "GJA1", "OTX2"),
+                                       nCol = 3, min.cutoff = NA, max.cutoff = NA, no.legend=F)
+            
+```
+
+
+##### Differential expression analysis of Brain
+```{r echo=FALSE}
+# ---- Differential expression analysis of Brain ----
+
+# DE between mixed and un-mixed brain cells:
+gbm <- SetAllIdent(gbm, id = "ClusterID")
+
+idx_Brain_unmixed <- which(as.logical((gbm@meta.data$TumorBrain == "Brain")*
+                                        (gbm@meta.data$SampleID == "NSC")))
+idx_Brain_mixed <- which(as.logical((gbm@meta.data$TumorBrain == "Brain")*
+                           (gbm@meta.data$SampleID %in% c("F2m", "F3m", "F6m", "F9m"))))
+
+BrainCompare <- vector(mode = "character", length = dim(gbm@scale.data)[2])
+BrainCompare[idx_Brain_mixed] <- "mixed"
+BrainCompare[idx_Brain_unmixed] <- "unmixed"
+gbm@meta.data$BrainCompare <- BrainCompare
+
+gbm <- SetAllIdent(gbm, id="BrainCompare")
+DE_NSC <- FindMarkers(object = gbm, ident.1 = "mixed", ident.2 = "unmixed", 
+                     logfc.threshold = 0.15, test.use = "wilcox", min.pct = 0.1)
+DE_NSC_GenesUp <- rownames(DE_NSC)[as.logical((DE_NSC$p_val_adj < 0.05)*(DE_NSC$avg_logFC > 0))]
+DE_NSC_GenesDown <- rownames(DE_NSC)[as.logical((DE_NSC$p_val_adj < 0.05)*(DE_NSC$avg_logFC < 0))]
+
+DE_NSC_topUp <- DE_NSC[DE_NSC_GenesUp,]
+DE_NSC_topDown <- DE_NSC[DE_NSC_GenesDown,]
+
+
+write.csv(DE_NSC, file = paste0(folderpath, "seurat-out/DE_NSC.csv"))
+
+# volcano plot:
+DEres <- DE_NSC
+DEres$sigGene <- (DEres$p_val_adj < 1e-30)
+DEres$labelGene <- F
+DEres$labelGene[as.logical((DEres$p_val_adj<1e-30)*(DEres$avg_logFC>0.3))] <- T
+
+ggplot(DEres) +
+  geom_point(aes(x=avg_logFC, y=-log10(p_val_adj), colour=sigGene)) +
+  geom_text_repel(aes(x = avg_logFC, y = -log10(p_val_adj), label = ifelse(labelGene == T, rownames(DEres),""))) +
+  ggtitle("DE genes") +
+  xlab("log2 fold change") + 
+  ylab("-log10 adjusted p-value") +
+  theme(legend.position = "none",
+        plot.title = element_text(size = rel(1.5), hjust = 0.5),
+        axis.title = element_text(size = rel(1.25)))
+
+
+```
+
+```{r echo=FALSE}
+#### ---- Plot heatmap (clustering) of tumor cells using expression of DE genes ----
+
+g <- rownames(DE_allPat)[as.logical((DE_allPat$p_val_adj < 1e-5)*(DE_allPat$avg_logFC > 0.5))]
+
+c <- intersect(which(gbm@meta.data$TumorBrain == "Tumor"),
+               which(gbm@meta.data$MixedUnmixed == "Mixed"))
+
+hm.data <- gbm@scale.data[g, c]
+
+# collate annotations for heatmap
+hm.ann.col <- data.frame(gbm@meta.data)[c,
+                                        c("ClusterID","SampleID","TumorBrain","MixedUnmixed","PatientID")]
+#hm.ann.row <- data.frame(PatientID = c(rep("F2",topN), rep("F3",topN), rep("F6",topN), rep("F9",topN)))
+
+# specify colors for heatmap annotations
+VarColors1 = brewer.pal(10, "Set3")
+names(VarColors1) = levels(hm.ann.col[,"ClusterID"])
+VarColors2 = brewer.pal(9, "Paired")
+names(VarColors2) = c("F2", "F2m", "F3", "F3m", "F6", "F6m", "F9", "F9m", "NSC")
+VarColors3 = brewer.pal(4, "Set1")[1:2]
+names(VarColors3) = levels(hm.ann.col[,"TumorBrain"])
+VarColors4 = brewer.pal(4, "Set1")[3:4]
+names(VarColors4) = levels(hm.ann.col[,"MixedUnmixed"])
+VarColors5 = VarColors2[c(1,3,5,7,9)]
+names(VarColors5) = levels(hm.ann.col[,"PatientID"])
+ann_colors = list(ClusterID = VarColors1,
+                  SampleID = VarColors2,
+                  TumorBrain = VarColors3,
+                  MixedUnmixed = VarColors4,
+                  PatientID = VarColors5)
+
+cmap <- matlab.like(101)
+
+# set low and high cutoff for expression values
+x_cutoff_low <- 0
+x_cutoff_high <- 4
+breaks <- seq(x_cutoff_low, x_cutoff_high, (x_cutoff_high-x_cutoff_low)/100)
+hm.data <- apply(hm.data, c(1, 2), function(x) min(max(x,x_cutoff_low),x_cutoff_high))
+
+# order columns by mean expression across gene set
+col.order <- order(colMeans(hm.data))
+
+pdf(paste0(folderpath, "Heatmap_DE_GenesUp_sorted_mixedSamples.pdf"),width=24,height=24,paper='special') 
+aheatmap(hm.data,   
+         color = cmap, breaks = breaks, border_color = NA,
+         scale = "none",
+         distfun = "euclidean", hclustfun = "complete",
+         cellwidth = 0.5, cellheight = 3,
+         Rowv = NA, Colv = col.order,
+         annCol = hm.ann.col,
+         #annRow = hm.ann.row,
+         annColors = ann_colors,
+         cexRow = 0.8, cexCol = 1.2, labCol = NA
+)
+dev.off()
+
+
+
+```
+
+

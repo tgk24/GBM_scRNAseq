@@ -1,0 +1,22 @@
+---
+title: "GBM_06"
+author: "Teresa G Krieger"
+date: "4/2/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r echo=FALSE}
+
+# GBM marker gene expression
+FeaturePlot(gbm, features.plot = c("EGFR", "PDGFRA", "CHI3L1"), nCol = 3, pt.size = 0.2, cols = c("grey", "red"))
+
+# GSC marker gene expression
+FeaturePlot(gbm, features.plot = c("NES", "SALL4", "SOX2", "STAT3", "PROM1", "CD44", "GFAP", "OLIG2", "ITGA6"), nCol = 3, pt.size = 0.2, cols = c("grey", "red"))
+
+```
+

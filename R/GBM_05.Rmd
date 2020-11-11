@@ -1,0 +1,438 @@
+---
+title: "GBM_05"
+author: "Teresa G Krieger"
+date: "2/22/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### GBM analysis 05: ligand-receptor analysis
+
+##### Load data and initialise
+```{r echo=FALSE}
+
+library(gplots)
+
+# ---- Load data ----
+
+folderpath <- "~/Documents/Postdoc/GBM/Analysis_scRNA-seq/ligand-receptor/"
+setwd(folderpath)
+
+# Read in Seurat object containing all cells
+load("~/Documents/Postdoc/GBM/Analysis_scRNA-seq/seurat-datasets/SeuratObj_gbm_AllCells_afterTSNE_afterRegression.Rdata")
+gbm <- gbm.AllCells
+
+# Read in table of ligand-receptor pairs
+lrpairs <- read.table("~/Documents/Postdoc/GBM/Analysis_scRNA-seq/resources/Ligand_receptor_pairs_NamesOnly.txt", header=T, sep="")
+#lr.all <- unique(cbind(as.character(lrpairs$Ligand.ApprovedSymbol),as.character(lrpairs$Receptor.ApprovedSymbol)))
+lrpairs.expressed <- lrpairs[as.logical((lrpairs$Ligand.ApprovedSymbol %in% rownames(gbm@scale.data)) * 
+                                          (lrpairs$Receptor.ApprovedSymbol %in% rownames(gbm@scale.data))),]
+
+
+```
+
+##### Heatmap of ligand/receptor gene expression across samples
+```{r echo=FALSE}
+
+# Identify genes expressed in our data
+lrgenes <- unique(c(as.character(lrpairs$Ligand.ApprovedSymbol),as.character(lrpairs$Receptor.ApprovedSymbol)))
+lrgenes.expressed <- lrgenes[lrgenes %in% rownames(gbm@scale.data)]
+
+# Make heatmap
+hm.data <- gbm@scale.data[lrgenes.expressed,]
+cmap <- colorspace::diverge_hsv(101)
+filename <- paste0(folderpath, "Heatmap_LR_allGenes.pdf")
+pdf(filename,width=24,height=12,paper='special') 
+heatmap.2(hm.data,
+          col = cmap,
+          Rowv = T, Colv = F,
+          dendrogram = "row",
+          scale = "none",
+          cexRow = 0.2,
+          trace = "none"
+)
+dev.off()
+
+# Identify genes differentially expressed upon co-culture
+pval.thresh <- 0.05
+# - load DE genes
+a <- read.csv(file = '/Users/tgk/Documents/Postdoc/GBM/Analysis_scRNA-seq/seurat-out/DE_NSC.csv')
+load(file = '/Users/tgk/Documents/Postdoc/GBM/Analysis_scRNA-seq/seurat-out/DE_F2.Rdata')
+a <- a[a$p_val_adj < pval.thresh,]
+DE_F2 <- DE_F2[DE_F2$p_val_adj < pval.thresh,]
+load(file = '/Users/tgk/Documents/Postdoc/GBM/Analysis_scRNA-seq/seurat-out/DE_F3.Rdata')
+DE_F3 <- DE_F3[DE_F3$p_val_adj < pval.thresh,]
+load(file = '/Users/tgk/Documents/Postdoc/GBM/Analysis_scRNA-seq/seurat-out/DE_F9.Rdata')
+DE_F9 <- DE_F9[DE_F9$p_val_adj < pval.thresh,]
+allDE <- data.table(Gene = c(rownames(DE_F2), rownames(DE_F3), rownames(DE_F9), a$X),
+                    Patient = c(rep("F2", dim(DE_F2)[1]), rep("F3", dim(DE_F3)[1]), 
+                                rep("F9", dim(DE_F9)[1]), rep("NSC", dim(a)[1])))
+# Limit to ligand/receptor genes
+allDElr <- allDE[allDE$Gene %in% lrgenes,]
+#dim(allDElr) 
+#length(unique(allDElr$Gene)) --> 94 unique DE l/r genes
+
+# Make heatmap
+hm.data <- gbm@scale.data[unique(allDElr$Gene),]
+cmap <- colorspace::diverge_hsv(101)
+filename <- paste0(folderpath, "Heatmap_LR_DEGenes_2.pdf")
+pdf(filename,width=24,height=12,paper='special') 
+heatmap.2(hm.data,
+          col = cmap,
+          Rowv = T, Colv = F,
+          dendrogram = "none",
+          scale = "none",
+          cexRow = 0.2,
+          trace = "none"
+)
+dev.off()
+
+# Limit to upregulated ligand/receptor genes
+allDEup <- data.table(Gene = c(rownames(DE_F2)[DE_F2$avg_logFC>0], 
+                               rownames(DE_F3)[DE_F3$avg_logFC>0], 
+                               rownames(DE_F9)[DE_F9$avg_logFC>0], 
+                               a$X[a$avg_logFC>0]),
+                    Patient = c(rep("F2", dim(DE_F2[DE_F2$avg_logFC>0,])[1]), 
+                                rep("F3", dim(DE_F3[DE_F3$avg_logFC>0,])[1]), 
+                                rep("F9", dim(DE_F9[DE_F9$avg_logFC>0,])[1]), 
+                                rep("NSC", dim(a[a$avg_logFC>0,])[1])))
+allDEuplr <- allDEup[allDEup$Gene %in% lrgenes,]  # --> 40 unique genes
+
+# Make heatmap
+hm.data <- gbm@scale.data[unique(allDEuplr$Gene),]
+cmap <- colorspace::diverge_hsv(101)
+filename <- paste0(folderpath, "Heatmap_LR_DEupGenes_2.pdf")
+pdf(filename,width=24,height=12,paper='special') 
+heatmap.2(hm.data,
+          col = cmap,
+          Rowv = T, Colv = F,
+          dendrogram = "none",
+          scale = "none",
+          cexRow = 0.2,
+          trace = "none"
+)
+dev.off()
+
+
+# Limit to ligand/receptor genes upregulated in NPCs or in all GBM cell lines
+DE_intersect_GenesUp <- read.csv("~/Documents/Postdoc/GBM/Analysis_scRNA-seq/seurat-out/DE_intersect_GenesUp.csv")
+allDEupIntersect <- data.table(Gene = c(as.character(DE_intersect_GenesUp[DE_intersect_GenesUp %in% lrgenes]), 
+                                    as.character(a$X[a$avg_logFC>0])),
+                              Patient = c(rep("GBM", sum(DE_intersect_GenesUp %in% lrgenes)), 
+                                   rep("NSC", dim(a[a$avg_logFC>0,])[1])))
+allDEupIntersect <- allDEupIntersect[allDEupIntersect$Gene %in% lrgenes,]  # --> 19 unique genes
+
+# Make heatmap
+hm.data <- gbm@scale.data[unique(allDEuplr$Gene),]
+cmap <- colorspace::diverge_hsv(101)
+filename <- paste0(folderpath, "Heatmap_LR_DEupGenesIntersect.pdf")
+pdf(filename,width=24,height=12,paper='special') 
+heatmap.2(hm.data,
+          col = cmap,
+          Rowv = F, Colv = F,
+          dendrogram = "none",
+          scale = "none",
+          cexRow = 0.2,
+          trace = "none"
+)
+dev.off()
+
+
+
+# Make dot plot
+# - remove F6 cells from data
+gbm.DotPlot <- SetAllIdent(gbm, id = "orig.ident")
+gbm.DotPlot <- SubsetData(gbm.DotPlot, ident.remove = c("F6", "F6m"))
+SampleType <- paste(gbm.DotPlot@meta.data$SampleID, gbm.DotPlot@meta.data$TumorBrain, sep="_")
+SampleType[SampleType %in% c("NSC_Tumor", "F2_Brain", "F3_Brain", "F6_Brain", "F9_Brain")] <- "NA"
+gbm.DotPlot@meta.data$SampleType <- SampleType
+gbm.DotPlot <- SetAllIdent(gbm.DotPlot, id = "SampleType")
+gbm.DotPlot@meta.data$SampleType
+DotPlot(object = gbm.DotPlot, genes.plot = unique(allDEuplr$Gene), plot.legend = TRUE, x.lab.rot = TRUE, col.min = -1.5, col.max = 1.5, cols.use = c("grey", "blue"))
+
+
+
+```
+
+
+
+
+
+##### Make cell-cell interaction matrix of possible interactions
+```{r echo=FALSE}
+
+# initialise
+interactions <- matrix(NA, nrow = ncol(gbm@data), ncol = ncol(gbm@data))
+rownames(interactions) <- colnames(gbm@data)
+colnames(interactions) <- colnames(gbm@data)
+
+min.expr <- 0.5
+samples <- c("NSC", "F2", "F3", "F9", "NSC", "F2m", "F3m", "F6m", "F9m")
+sampleIDs <- gbm@meta.data$SampleID
+names(sampleIDs) <- colnames(gbm@data)
+
+# loop through interactions: row = expresses receptor, column = expresses ligand
+for (i in 1:length(samples)){
+  s = samples[i]
+  # identify all cells in this sample
+  cells = colnames(gbm@data)[gbm@meta.data$SampleID==s]
+  # loop through cells
+  for (c in 1:length(cells)){
+    # identify ligands that are expressed in this cell
+    x1 <- gbm@data[lrpairs.expressed$Ligand.ApprovedSymbol,cells[c]]>min.expr
+    # identify receptors that are expressed in all other cells in the same sample
+    x2 <- gbm@data[lrpairs.expressed$Receptor.ApprovedSymbol,cells[-c]]>min.expr
+    # sum interactions for each cell
+    interactions[cells[-c],cells[c]] <- colSums(x1*x2)
+  }
+}
+
+# Box plot for each combination of cells of the same type; cell named expresses ligand
+lrinteractions <- matrix(ncol = 10, nrow = 1500)
+colnames(lrinteractions) <-  c("F2", "F2m_GBM", "F2m_NPC", "F3", "F3m_GBM", "F3m_NPC", "F9", "F9m_GBM", "F9m_NPC", "NPC")
+# calculate the average number of connections that each cell has as a ligand
+cM <- colMeans(interactions, na.rm = T)
+# fill in 'lrinteractions' matrix
+cMs <- cM[(gbm@meta.data$SampleID=="F2") & (gbm@meta.data$TumorBrain=="Tumor")]
+lrinteractions[1:length(cMs),"F2"] <- cMs
+cMs <- cM[(gbm@meta.data$SampleID=="F2m") & (gbm@meta.data$TumorBrain=="Tumor")]
+lrinteractions[1:length(cMs),"F2m_GBM"] <- cMs
+cMs <- cM[(gbm@meta.data$SampleID=="F2m") & (gbm@meta.data$TumorBrain=="Brain")]
+lrinteractions[1:length(cMs),"F2m_NPC"] <- cMs
+cMs <- cM[(gbm@meta.data$SampleID=="F3") & (gbm@meta.data$TumorBrain=="Tumor")]
+lrinteractions[1:length(cMs),"F3"] <- cMs
+cMs <- cM[(gbm@meta.data$SampleID=="F3m") & (gbm@meta.data$TumorBrain=="Tumor")]
+lrinteractions[1:length(cMs),"F3m_GBM"] <- cMs
+cMs <- cM[(gbm@meta.data$SampleID=="F3m") & (gbm@meta.data$TumorBrain=="Brain")]
+lrinteractions[1:length(cMs),"F3m_NPC"] <- cMs
+cMs <- cM[(gbm@meta.data$SampleID=="F9") & (gbm@meta.data$TumorBrain=="Tumor")]
+lrinteractions[1:length(cMs),"F9"] <- cMs
+cMs <- cM[(gbm@meta.data$SampleID=="F9m") & (gbm@meta.data$TumorBrain=="Tumor")]
+lrinteractions[1:length(cMs),"F9m_GBM"] <- cMs
+cMs <- cM[(gbm@meta.data$SampleID=="F9m") & (gbm@meta.data$TumorBrain=="Brain")]
+lrinteractions[1:length(cMs),"F9m_NPC"] <- cMs
+cMs <- cM[(gbm@meta.data$SampleID=="NSC") & (gbm@meta.data$TumorBrain=="Brain")]
+lrinteractions[1:length(cMs),"NPC"] <- cMs
+# change column order for plotting
+lrinteractions <- as.matrix(lrinteractions[,c("F2", "F3", "F9", "F2m_GBM", "F3m_GBM", "F9m_GBM", "F2m_NPC",  "F3m_NPC", "F9m_NPC", "NPC")])
+
+# Make box plot
+library(sfsmisc)
+library(RColorBrewer)
+col = brewer.pal(10, "Spectral")
+boxplot.matrix(lrinteractions, col=col)
+
+```
+
+
+
+##### Feature plots
+```{r echo=FALSE}
+
+filename <- paste0(folderpath, "GBM_Markers_higherContrast_3.pdf")
+pdf(filename,width=9,height=9,paper='special') 
+FeaturePlot(gbm, features.plot = c("NES", "SALL4", "SOX2", "STAT3", "PROM1", "CD44", "GFAP", "OLIG2", "ITGA6"), nCol = 3, pt.size = 0.5, cols = c("lightgrey", "red3"))
+dev.off()
+
+filename <- paste0(folderpath, "GBM_Markers2_higherContrast_2.pdf")
+pdf(filename,width=3,height=9,paper='special') 
+FeaturePlot(gbm, features.plot = c("EGFR", "PDGFRA", "CHI3L1"), nCol = 1, pt.size = 0.5, cols = c("lightgrey", "red3"))
+dev.off()
+
+```
+
+
+##### Heatmap of ligand/receptor pairs across samples
+```{r echo=FALSE}
+
+# Determine interacting pairs for each cell type pairing
+# excluding patient F6
+
+# initialise interaction matrices
+lrinteractions <- matrix(ncol = 16, nrow = length(lrpairs.expressed$Pair.Name))
+colnames(lrinteractions) <-  c("F2", "F2m_L", "F2m_R", "F2m_GBM", "F2m_NSC", "F3", "F3m_L", "F3m_R", "F3m_GBM", "F3m_NSC", "F9", "F9m_L", "F9m_R", "F9m_GBM", "F9m_NSC", "NSC")
+rownames(lrinteractions) <-  lrpairs.expressed$Pair.Name
+lrinteractions_norm <- lrinteractions
+
+# set expression threshold for detection  
+min.expr <- 0
+
+# loop through samples 
+
+samp <- c("F2", "F2m", "F3", "F3m", "F9", "F9m", "NSC")
+countCol <- 1 
+
+for (i in 1:7){   
+  
+  if (i %in% c(2,4,6)){  # mixed samples
+    
+    # interactions where tumor expresses ligand
+    lr.L <- double(length = length(lrpairs.expressed$Pair.Name))
+    
+    # interactions where tumor expresses receptor
+    lr.R <- double(length = length(lrpairs.expressed$Pair.Name))
+    
+    # interactions between tumor cells in the mixed samples
+    lr.GBM <- double(length = length(lrpairs.expressed$Pair.Name))
+    
+    # interactions between brain cells in the mixed samples
+    lr.NSC <- double(length = length(lrpairs.expressed$Pair.Name))
+    
+    data.tumor <- gbm@data[,as.logical((gbm@meta.data$SampleID == samp[i])*(gbm@meta.data$TumorBrain == "Tumor"))]
+    data.brain <- gbm@data[,as.logical((gbm@meta.data$SampleID == samp[i])*(gbm@meta.data$TumorBrain == "Brain"))]
+    
+    for (p in 1:length(lrpairs.expressed$Pair.Name)){ 
+      l.tumor <- data.tumor[lrpairs.expressed$Ligand.ApprovedSymbol[p],]>min.expr
+      r.brain <- data.brain[lrpairs.expressed$Receptor.ApprovedSymbol[p],]>min.expr
+      l.brain <- data.brain[lrpairs.expressed$Ligand.ApprovedSymbol[p],]>min.expr
+      r.tumor <- data.tumor[lrpairs.expressed$Receptor.ApprovedSymbol[p],]>min.expr
+      lr.L[p] <- sum(l.tumor)*sum(r.brain)
+      lr.R[p] <- sum(r.tumor)*sum(l.brain) 
+      lr.GBM[p] <- sum(l.tumor)*sum(r.tumor)
+      lr.NSC[p] <- sum(l.brain)*sum(r.brain)
+    }
+    lrinteractions[,countCol] <- lr.L 
+    lrinteractions[,countCol+1] <- lr.R 
+    lrinteractions[,countCol+2] <- lr.GBM
+    lrinteractions[,countCol+3] <- lr.NSC
+    # normalise to maximum number of possible cell-cell interactions
+    lrinteractions_norm[,countCol] <- lr.L / (dim(data.tumor)[2]*dim(data.brain)[2])
+    lrinteractions_norm[,countCol+1] <- lr.R / (dim(data.tumor)[2]*dim(data.brain)[2])
+    lrinteractions_norm[,countCol+2] <- lr.GBM / (dim(data.tumor)[2]*dim(data.tumor)[2])
+    lrinteractions_norm[,countCol+3] <- lr.NSC / (dim(data.brain)[2]*dim(data.brain)[2])    
+    countCol <- countCol + 4
+  } else {
+    
+    lr <- double(length = length(lrpairs.expressed$Pair.Name))
+    
+    data.use <- gbm@data[,gbm@meta.data$SampleID == samp[i]]
+    
+    for (p in 1:length(lrpairs.expressed$Pair.Name)){ 
+      l <- data.use[lrpairs.expressed$Ligand.ApprovedSymbol[p],]>min.expr
+      r <- data.use[lrpairs.expressed$Receptor.ApprovedSymbol[p],]>min.expr
+      lr[p] <- sum(l)*sum(r)
+    }
+    lrinteractions[,countCol] <- lr 
+    # normalise to maximum number of possible cell-cell interactions
+    lrinteractions_norm[,countCol] <- lr/(dim(data.use)[2]*dim(data.use)[2])
+    
+    countCol <- countCol + 1
+    
+  }
+}
+
+# Heatmap of normalised interaction matrix
+#cmap <- matlab.like(101)
+cmap <- colorspace::diverge_hsv(101)
+filename <- paste0(folderpath, "Heatmap_LR_allPairs.pdf")
+pdf(filename,width=24,height=12,paper='special') 
+heatmap.2(log(1e3*lrinteractions_norm+1),
+          col = cmap,
+          Rowv = T, Colv = F,
+          dendrogram = "row",
+          scale = "none",
+          cexRow = 0.2,
+          trace = "none"
+)
+dev.off()
+
+# save csv table
+write.csv(lrinteractions_norm, file=paste0(folderpath,"lrinteractions_allPairs.csv"))
+
+```
+
+
+##### Interactions that are highly expressed 
+```{r echo=FALSE}
+
+lrinteractions_norm <- as.matrix(read.csv(paste0(folderpath,"lrinteractions_allPairs.csv"), row.names = 1))
+
+# Find highly expressed interactions in each sample:
+# mean expression of interaction across all samples
+lr_meanExp <- mean(lrinteractions_norm)
+# tune sensitivity
+lambda <- 0.2
+# interactions > lambda * mean expression
+lr_highExp <- lrinteractions_norm > lambda*lr_meanExp
+#  interactions < lambda * mean expression
+lr_lowExp <- lrinteractions_norm < lambda*lr_meanExp
+
+# Find interactions that are highly expressed across sets of samples:
+lr_highGBM <- which(rowSums(lr_highExp[,c(1,6,11)])>2)
+lr_highNSC <- which(lr_highExp[,16]>0)
+lr_highMixedL <- which(rowSums(lr_highExp[,c(2,7,12)])>2)
+lr_highMixedR <- which(rowSums(lr_highExp[,c(3,8,13)])>2)
+lr_highMixedGBM <- which(rowSums(lr_highExp[,c(4,9,14)])>2)
+lr_highMixedNSC <- which(rowSums(lr_highExp[,c(5,10,15)])>2)
+
+# Heatmap of highly expressed interaction matrix
+select.rows <- unique(c(names(lr_highGBM), names(lr_highMixedL), names(lr_highMixedR), names(lr_highNSC)))
+lrinteractions_select <- lrinteractions_norm[select.rows,]
+filename <- paste0(folderpath, "Heatmap_LR_selectPairs_lambda0p2.pdf")
+pdf(filename,width=24,height=24,paper='special') 
+heatmap.2(log(1e3*lrinteractions_select+1),
+          col = cmap,
+          Rowv = T, Colv = F,
+          dendrogram = "row",
+          scale = "none",
+          cexRow = 0.5,
+          trace = "none"
+)
+dev.off()
+# save csv table
+write.csv(lrinteractions_select, file=paste0(folderpath,"lrinteractions_highExp_lambda0p2.csv"))
+
+
+```
+
+##### Clustering of only GBM-NSC interactions / only GBM cells in mixed samples
+```{r echo=FALSE}
+
+# Heatmap of interaction matrix
+#select.rows <- unique(c(names(lr_highGBM), names(lr_highMixedL), names(lr_highMixedR), names(lr_highNSC)))
+#select.cols <- c(2,3,7,8,12,13)
+select.cols <- c(1,2,3,6,7,8,11,12,13,16)
+lrinteractions_select <- lrinteractions_norm[select.rows,select.cols]
+filename <- paste0(folderpath, "Heatmap_LR_selectSamples2.pdf")
+pdf(filename,width=8,height=24,paper='special') 
+heatmap.2(log(1e3*lrinteractions_select+1),
+          col = cmap,
+          Rowv = T, Colv = F,
+          dendrogram = "row",
+          scale = "none",
+          cexRow = 0.5,
+          trace = "none"
+)
+dev.off()
+
+```
+
+
+
+##### Determine which receptor/ligand pairs are expressed in which sample types for GO analysis
+```{r echo=FALSE}
+
+# mean expression of interaction across all samples
+lr_meanExp <- mean(lrinteractions_norm)
+lambda = 0.5
+
+# GBM->GBM
+lr1 <- rowMeans(lrinteractions_norm[,c("F2", "F3", "F9")])
+# GBM->NSC
+lr2 <- rowMeans(lrinteractions_norm[,c("F2m_L", "F3m_L", "F9m_L")])
+# NSC->GBM
+lr3 <- rowMeans(lrinteractions_norm[,c("F2m_R", "F3m_R", "F9m_R")])
+# NSC->NSC
+lr4 <- mean(lrinteractions_norm[,c("NSC")])
+
+GOgenes_GBMGBM <- rownames(lrinteractions_norm)[((lr1 > lambda*lr_meanExp) & (lr2 < lambda*lr_meanExp) & (lr3 < lambda*lr_meanExp) & (lr4 < lambda*lr_meanExp))]
+GOgenes_GBMNSC <- rownames(lrinteractions_norm)[((lr2 > lambda*lr_meanExp) & (lr1 < lambda*lr_meanExp) & (lr3 < lambda*lr_meanExp) & (lr4 < lambda*lr_meanExp))]
+GOgenes_NSCGBM <- rownames(lrinteractions_norm)[((lr3 > lambda*lr_meanExp) & (lr1 < lambda*lr_meanExp) & (lr2 < lambda*lr_meanExp) & (lr4 < lambda*lr_meanExp))]
+GOgenes_NSCNSC <- rownames(lrinteractions_norm)[((lr4 > lambda*lr_meanExp) & (lr2 < lambda*lr_meanExp) & (lr3 < lambda*lr_meanExp) & (lr1 < lambda*lr_meanExp))]
+
+
+
+```
